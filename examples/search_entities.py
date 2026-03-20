@@ -1,8 +1,13 @@
 from opengate_data import OpenGateClient
 import os
 import json
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Add src to path so we can import filters.py
+sys.path.append(str(Path(__file__).parent.parent / "src"))
+from opengate_alarms.filters import ENTITY_FILTERS
 
 # Load environment variables from .env file
 load_dotenv()
@@ -10,7 +15,7 @@ load_dotenv()
 def search_active_devices():
     """
     Example of how to search for entities using the opengate-data library.
-    Reuses the filter and select definition from filters/entities/active_devices.json.
+    Reuses the filter definition from src/opengate_alarms/filters.py.
     """
     # Configuration
     # Note: opengate-data client expects the base URL (without /north/v80)
@@ -23,14 +28,8 @@ def search_active_devices():
     # Initialize the client
     client = OpenGateClient(api_key=api_key, url=base_url)
     
-    # Load search criteria from the project's filter directory
-    filter_path = Path(__file__).parent.parent / "filters" / "entities" / "active_devices.json"
-    if not filter_path.exists():
-        print(f"Error: Filter file not found at {filter_path}")
-        return
-
-    with open(filter_path, "r") as f:
-        search_config = json.load(f)
+    # Load search criteria from filters.py
+    search_config = ENTITY_FILTERS.get("active_devices", {})
     
     print(f"Searching entities in {base_url}...")
     

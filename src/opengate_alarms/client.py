@@ -1,8 +1,10 @@
 import httpx
 import os
+import asyncio
 from typing import List, Optional, Dict, Any
 from .models import Alarm, AlarmSummary, SearchRequest
 from dotenv import load_dotenv
+from opengate_data import OpenGateClient
 
 import logging
 from datetime import datetime
@@ -36,6 +38,10 @@ class OpenGateAlarmClient:
         
         self.verify_ssl = os.getenv("OPENGATE_VERIFY_SSL", "True").lower() == "true"
         
+        # Initialize opengate-data client
+        og_url = self.base_url.replace("/north/v80", "")
+        self.og_client = OpenGateClient(api_key=self.api_key, url=og_url)
+        
         self.headers = {
             "X-ApiKey": self.api_key,
             "Content-Type": "application/json",
@@ -46,40 +52,54 @@ class OpenGateAlarmClient:
         if search_request is None:
             search_request = SearchRequest()
 
-        url = f"{self.base_url}/search/entities/alarms"
-        async with httpx.AsyncClient(verify=self.verify_ssl) as client:
-            payload = search_request.model_dump(by_alias=True, exclude_none=True)
-            # If payload is just default values (empty filter and default pagination), some APIs prefer empty dict
-            if not payload.get("filter") and payload.get("limit", {}).get("size") == 50 and payload.get("limit", {}).get("start") == 1:
-                payload = {}
+        builder = self.og_client.new_alarm_search_builder()
+        payload = search_request.model_dump(by_alias=True, exclude_none=True)
+        
+        if payload.get("filter"):
+            builder.with_filter(payload["filter"])
             
-            logger.info(f"Querying alarms - URL: {url} - Payload: {payload}")
-
+        limit = payload.get("limit", {})
+        if limit:
+            builder.with_limit(limit.get("size", 50), limit.get("start", 1))
             
-            response = await client.post(url, headers=self.headers, json=payload)
+        builder.with_format("dict")
+        logger.info(f"Querying alarms via opengate-data - Payload: {payload}")
+        
+        try:
+            results_raw = await asyncio.to_thread(builder.build_execute)
+            if isinstance(results_raw, str):
+                import json
+                data = json.loads(results_raw)
+            else:
+                data = results_raw
             
-            if response.status_code != 200:
-                logger.error(f"API Error {response.status_code}: {response.text}")
-            
-            response.raise_for_status()
-            data = response.json()
-
-            # The API usually returns a list of alarms directly or inside a field
-            # Based on docs, it returns a list of alarms
-            if isinstance(data, list):
-                return [Alarm(**item) for item in data]
-            elif "alarms" in data:
-                return [Alarm(**item) for item in data["alarms"]]
-            return []
+            alarms_list = data if isinstance(data, list) else data.get("alarms", [])
+            return [Alarm(**item) for item in alarms_list]
+        except Exception as e:
+            logger.error(f"API Error in query_alarms: {e}")
+            raise
 
     async def get_summary(self, filter_data: Optional[Dict[str, Any]] = None) -> AlarmSummary:
-        url = f"{self.base_url}/search/entities/alarms/summary"
-        payload = {"filter": filter_data or {}}
-        async with httpx.AsyncClient(verify=self.verify_ssl) as client:
-            response = await client.post(url, headers=self.headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        builder = self.og_client.new_alarm_search_builder()
+        builder.with_summary()
+        
+        if filter_data:
+            builder.with_filter(filter_data)
+            
+        builder.with_format("dict")
+        
+        try:
+            results_raw = await asyncio.to_thread(builder.build_execute)
+            if isinstance(results_raw, str):
+                import json
+                data = json.loads(results_raw)
+            else:
+                data = results_raw
+                
             return AlarmSummary(**data["summary"])
+        except Exception as e:
+            logger.error(f"API Error in get_summary: {e}")
+            raise
 
     async def change_state(self, action: str, alarm_ids: List[str], notes: Optional[str] = None) -> bool:
         url = f"{self.base_url}/alarms"

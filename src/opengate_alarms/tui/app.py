@@ -116,22 +116,20 @@ class OpenGateApp(App):
         await self.refresh_entities()
 
     async def load_all_filters(self) -> None:
-        await self.load_filters_into_list("#alarm-filter-list", "filters/alarms")
-        await self.load_filters_into_list("#entity-filter-list", "filters/entities")
+        from ..filters import ALARM_FILTERS, ENTITY_FILTERS
+        await self.load_filters_into_list("#alarm-filter-list", list(ALARM_FILTERS.keys()))
+        await self.load_filters_into_list("#entity-filter-list", list(ENTITY_FILTERS.keys()))
 
-    async def load_filters_into_list(self, list_id: str, directory: str) -> None:
+    async def load_filters_into_list(self, list_id: str, keys: List[str]) -> None:
         filter_list = self.query_one(list_id, ListView)
-        filter_dir = Path(directory)
-        if not filter_dir.exists():
-            filter_dir.mkdir(parents=True, exist_ok=True)
             
         await filter_list.clear()
-        filters = sorted(list(filter_dir.glob("*.json")))
-        for f in filters:
-            item = ListItem(Label(f.stem), id=f.stem.replace(".", "_"))
+        
+        for k in sorted(keys):
+            item = ListItem(Label(k), id=k)
             await filter_list.append(item)
         
-        if filters:
+        if keys:
             filter_list.index = 0
 
     @on(ListView.Selected)
@@ -139,12 +137,12 @@ class OpenGateApp(App):
         if not event.item or not event.item.id:
             return
             
-        filename = f"{event.item.id}.json"
+        filter_key = event.item.id
         # Determine which list triggered the event
         if event.list_view.id == "alarm-filter-list":
-            await self.refresh_alarms(filter_file=filename)
+            await self.refresh_alarms(filter_key=filter_key)
         elif event.list_view.id == "entity-filter-list":
-            await self.refresh_entities(filter_file=filename)
+            await self.refresh_entities(filter_key=filter_key)
 
     async def action_refresh(self) -> None:
         # Determine active tab
@@ -154,35 +152,35 @@ class OpenGateApp(App):
         if active_tab == "alarms-tab":
             filter_list = self.query_one("#alarm-filter-list", ListView)
             if filter_list.index is not None:
-                filename = f"{filter_list.children[filter_list.index].id}.json"
-                await self.refresh_alarms(filter_file=filename)
+                filter_key = filter_list.children[filter_list.index].id
+                await self.refresh_alarms(filter_key=filter_key)
             else:
                 await self.refresh_alarms()
         elif active_tab == "entities-tab":
             filter_list = self.query_one("#entity-filter-list", ListView)
             if filter_list.index is not None:
-                filename = f"{filter_list.children[filter_list.index].id}.json"
-                await self.refresh_entities(filter_file=filename)
+                filter_key = filter_list.children[filter_list.index].id
+                await self.refresh_entities(filter_key=filter_key)
             else:
                 await self.refresh_entities()
 
-    async def refresh_alarms(self, filter_file: Optional[str] = None) -> None:
+    async def refresh_alarms(self, filter_key: Optional[str] = None) -> None:
+        from ..filters import ALARM_FILTERS
         table = self.query_one("#alarms-table", DataTable)
         table.clear()
         
         search_req = SearchRequest()
-        if filter_file:
+        if filter_key and filter_key in ALARM_FILTERS:
             try:
-                with open(Path("filters/alarms") / filter_file, "r") as f:
-                    filter_data = json.load(f)
-                    logger.info(f"Loaded alarm filter from {filter_file}: {filter_data}")
-                    if "filter" in filter_data:
-                        search_req.filter = filter_data["filter"]
-                    elif filter_data:
-                        search_req.filter = filter_data
+                filter_data = ALARM_FILTERS[filter_key]
+                logger.info(f"Loaded alarm filter {filter_key}: {filter_data}")
+                if "filter" in filter_data:
+                    search_req.filter = filter_data["filter"]
+                elif filter_data:
+                    search_req.filter = filter_data
             except Exception as e:
-                logger.error(f"Error loading alarm filter {filter_file}: {e}")
-                self.notify(f"Error loading alarm filter {filter_file}: {e}", severity="error")
+                logger.error(f"Error loading alarm filter {filter_key}: {e}")
+                self.notify(f"Error loading alarm filter {filter_key}: {e}", severity="error")
 
         if self.mock_mode:
             alarms = [
@@ -199,7 +197,8 @@ class OpenGateApp(App):
         for alarm in alarms:
             table.add_row(alarm.id, alarm.entity_id, alarm.name, alarm.severity, alarm.status, str(alarm.creation_date))
 
-    async def refresh_entities(self, filter_file: Optional[str] = None) -> None:
+    async def refresh_entities(self, filter_key: Optional[str] = None) -> None:
+        from ..filters import ENTITY_FILTERS
         table = self.query_one("#entities-table", DataTable)
         table.clear()
         
@@ -209,17 +208,16 @@ class OpenGateApp(App):
         # Default column mapping: list of (Header, DataPath)
         column_map = [("ID", ["id"]), ("NAME", ["name"]), ("TYPE", ["resourceType"])]
         
-        if filter_file:
+        if filter_key and filter_key in ENTITY_FILTERS:
             try:
-                with open(Path("filters/entities") / filter_file, "r") as f:
-                    filter_data = json.load(f)
-                    logger.info(f"Loaded entity filter from {filter_file}: {filter_data}")
-                    search_req = filter_data
-                    if "select" in filter_data:
-                        column_map = self.parse_complex_select(filter_data["select"])
+                filter_data = ENTITY_FILTERS[filter_key]
+                logger.info(f"Loaded entity filter {filter_key}: {filter_data}")
+                search_req = filter_data
+                if "select" in filter_data:
+                    column_map = self.parse_complex_select(filter_data["select"])
             except Exception as e:
-                logger.error(f"Error loading entity filter {filter_file}: {e}")
-                self.notify(f"Error loading entity filter {filter_file}: {e}", severity="error")
+                logger.error(f"Error loading entity filter {filter_key}: {e}")
+                self.notify(f"Error loading entity filter {filter_key}: {e}", severity="error")
 
         # Update columns dynamically
         table.clear(columns=True)

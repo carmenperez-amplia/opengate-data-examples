@@ -1,6 +1,5 @@
 import pytest
-import respx
-import httpx
+from unittest.mock import patch, MagicMock
 from opengate_alarms.client import OpenGateAlarmClient
 from opengate_alarms.models import Alarm, SearchRequest
 from datetime import datetime
@@ -8,21 +7,27 @@ from datetime import datetime
 @pytest.mark.asyncio
 async def test_query_alarms_mock():
     client = OpenGateAlarmClient(api_key="fake-key")
-    url = f"{client.base_url}/search/entities/alarms"
     
     mock_response = [
         {
-            "alarm.identifier": "AL-001",
-            "alarm.entityIdentifier": "DEV-01",
-            "alarm.name": "Test Alarm",
-            "alarm.severity": "CRITICAL",
-            "alarm.status": "OPEN",
-            "alarm.creationDate": "2023-10-27T10:00:00Z"
+            "identifier": "AL-001",
+            "entityIdentifier": "DEV-01",
+            "name": "Test Alarm",
+            "severity": "CRITICAL",
+            "status": "OPEN",
+            "openingDate": "2023-10-27T10:00:00Z"
         }
     ]
 
-    async with respx.mock:
-        respx.post(url).mock(return_value=httpx.Response(200, json=mock_response))
+    with patch('opengate_data.OpenGateClient.new_alarm_search_builder') as mock_builder_func:
+        mock_builder = MagicMock()
+        mock_builder_func.return_value = mock_builder
+        mock_builder.build_execute.return_value = mock_response
+        
+        # Chained methods should return mock_builder
+        mock_builder.with_filter.return_value = mock_builder
+        mock_builder.with_limit.return_value = mock_builder
+        mock_builder.with_format.return_value = mock_builder
         
         alarms = await client.query_alarms()
         
@@ -33,7 +38,6 @@ async def test_query_alarms_mock():
 @pytest.mark.asyncio
 async def test_get_summary_mock():
     client = OpenGateAlarmClient(api_key="fake-key")
-    url = f"{client.base_url}/search/entities/alarms/summary"
     
     mock_response = {
         "summary": {
@@ -50,8 +54,15 @@ async def test_get_summary_mock():
         }
     }
 
-    async with respx.mock:
-        respx.post(url).mock(return_value=httpx.Response(200, json=mock_response))
+    with patch('opengate_data.OpenGateClient.new_alarm_search_builder') as mock_builder_func:
+        mock_builder = MagicMock()
+        mock_builder_func.return_value = mock_builder
+        mock_builder.build_execute.return_value = mock_response
+        
+        # Chained methods
+        mock_builder.with_summary.return_value = mock_builder
+        mock_builder.with_filter.return_value = mock_builder
+        mock_builder.with_format.return_value = mock_builder
         
         summary = await client.get_summary()
         
